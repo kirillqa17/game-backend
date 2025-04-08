@@ -1,6 +1,8 @@
 use actix_web::{web, App, HttpResponse, HttpServer};
 use sqlx::postgres::PgPool;
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
+use actix_cors::Cors;
+
 
 async fn result(pool: web::Data<PgPool>, telegram_id: web::Path<i64>, data: web::Json<i64>) -> HttpResponse {
     let game_result = data.into_inner();
@@ -46,7 +48,15 @@ async fn main() -> std::io::Result<()> {
     builder.set_certificate_chain_file("certs/fullchain.pem")?;
 
     HttpServer::new(move || {
+
+        let cors = Cors::default()
+        .allowed_origin("https://https://kirillqa17.github.io/")
+        .allow_any_method()
+        .allow_any_header()
+        .max_age(3600);
+
         App::new()
+            .wrap(cors)
             .app_data(web::Data::new(pool.clone()))
             .service(web::resource("/result/{telegram_id}").route(web::post().to(result)))
     })
