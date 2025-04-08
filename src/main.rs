@@ -50,7 +50,7 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(move || {
 
         let cors = Cors::default()
-        .allowed_origin("https://https://kirillqa17.github.io/")
+        .allowed_origin("https://kirillqa17.github.io/vpn-game")
         .allow_any_method()
         .allow_any_header()
         .max_age(3600);
