@@ -2,6 +2,7 @@ use actix_web::{web, App, HttpResponse, HttpServer};
 use sqlx::postgres::PgPool;
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 use actix_cors::Cors;
+use serde_json::json;
 
 
 async fn result(pool: web::Data<PgPool>, telegram_id: web::Path<i64>, data: web::Json<i64>) -> HttpResponse {
@@ -22,12 +23,12 @@ async fn result(pool: web::Data<PgPool>, telegram_id: web::Path<i64>, data: web:
     .await {
         Ok(result) => {
             if result.rows_affected() == 0 {
-                HttpResponse::NotFound().body("User not found")
+                HttpResponse::NotFound().json(json!({ "error": "User not found" }))
             } else {
-                HttpResponse::Ok().body("Game points updated successfully")
+                HttpResponse::Ok().json(json!({ "status": "success" }))
             }
         }
-        Err(_) => HttpResponse::InternalServerError().body("Failed to update game results"),
+        Err(_) => HttpResponse::InternalServerError().json(json!({ "error": "Failed to update game results" })),
     };
     
     result
