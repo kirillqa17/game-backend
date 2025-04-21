@@ -104,6 +104,29 @@ async fn update_claim_time(
     }
 }
 
+#[get("/claim/{telegram_id}")]
+async fn get_claim_time(
+    pool: web::Data<PgPool>,
+    telegram_id: web::Path<i64>,
+) -> HttpResponse {
+    match sqlx::query!(
+        r#"
+        SELECT next_claim_time as "next_claim_time: DateTime<Utc>"
+        FROM users 
+        WHERE telegram_id = $1
+        "#,
+        telegram_id.into_inner()
+    )
+    .fetch_one(pool.get_ref())
+    .await {
+        Ok(record) => HttpResponse::Ok().json(json!({ 
+            "next_claim_time": record.next_claim_time.map(|t| t.to_rfc3339()) 
+        })),
+        Err(sqlx::Error::RowNotFound) => HttpResponse::NotFound().json(json!({ "error": "User not found" })),
+        Err(_) => HttpResponse::InternalServerError().json(json!({ "error": "Database error" })),
+    }
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenv::dotenv().ok();
@@ -133,6 +156,7 @@ async fn main() -> std::io::Result<()> {
             .service(get_attempts)
             .service(add_attempts)
             .service(update_claim_time)
+            .service(get_claim_time)
     })
     .bind_openssl("0.0.0.0:443", builder)?
     .run()
