@@ -1,37 +1,106 @@
-use actix_web::{web, App, HttpResponse, HttpServer};
+use actix_web::{web, App, HttpResponse, HttpServer, get, post};
 use sqlx::postgres::PgPool;
-use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
-use actix_cors::Cors;
 use serde_json::json;
+use actix_cors::Cors;
+use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 
+// Получение очков пользователя
+#[get("/points/{telegram_id}")]
+async fn get_points(pool: web::Data<PgPool>, telegram_id: web::Path<i64>) -> HttpResponse {
+    match sqlx::query!(
+        "SELECT game_points FROM users WHERE telegram_id = $1",
+        telegram_id.into_inner()
+    )
+    .fetch_one(pool.get_ref())
+    .await {
+        Ok(record) => HttpResponse::Ok().json(json!({ "points": record.game_points })),
+        Err(sqlx::Error::RowNotFound) => HttpResponse::NotFound().json(json!({ "error": "User not found" })),
+        Err(_) => HttpResponse::InternalServerError().json(json!({ "error": "Database error" })),
+    }
+}
 
-async fn result(pool: web::Data<PgPool>, telegram_id: web::Path<i64>, data: web::Json<i64>) -> HttpResponse {
-    let game_result = data.into_inner();
-    let telegram_id = telegram_id.into_inner();
+// Обновление очков пользователя
+#[post("/points/{telegram_id}")]
+async fn update_points(
+    pool: web::Data<PgPool>,
+    telegram_id: web::Path<i64>,
+    data: web::Json<i64>,
+) -> HttpResponse {
+    let points = data.into_inner();
     
-    // Обновляем количество очков в базе данных
-    let result = match sqlx::query!(
+    match sqlx::query!(
+        "UPDATE users SET game_points = $1 WHERE telegram_id = $2 RETURNING game_points",
+        points,
+        telegram_id.into_inner()
+    )
+    .fetch_one(pool.get_ref())
+    .await {
+        Ok(record) => HttpResponse::Ok().json(json!({ "points": record.game_points })),
+        Err(sqlx::Error::RowNotFound) => HttpResponse::NotFound().json(json!({ "error": "User not found" })),
+        Err(_) => HttpResponse::InternalServerError().json(json!({ "error": "Failed to update points" })),
+    }
+}
+
+// Получение попыток пользователя
+#[get("/attempts/{telegram_id}")]
+async fn get_attempts(pool: web::Data<PgPool>, telegram_id: web::Path<i64>) -> HttpResponse {
+    match sqlx::query!(
+        "SELECT game_attempts FROM users WHERE telegram_id = $1",
+        telegram_id.into_inner()
+    )
+    .fetch_one(pool.get_ref())
+    .await {
+        Ok(record) => HttpResponse::Ok().json(json!({ "attempts": record.game_attempts })),
+        Err(sqlx::Error::RowNotFound) => HttpResponse::NotFound().json(json!({ "error": "User not found" })),
+        Err(_) => HttpResponse::InternalServerError().json(json!({ "error": "Database error" })),
+    }
+}
+
+// Добавление попыток пользователю
+#[post("/attempts/{telegram_id}/add")]
+async fn add_attempts(
+    pool: web::Data<PgPool>,
+    telegram_id: web::Path<i64>,
+    data: web::Json<i64>,
+) -> HttpResponse {
+    let attempts_to_add = data.into_inner();
+    
+    match sqlx::query!(
+        "UPDATE users SET game_attempts = game_attempts + $1 WHERE telegram_id = $2 RETURNING game_attempts",
+        attempts_to_add,
+        telegram_id.into_inner()
+    )
+    .fetch_one(pool.get_ref())
+    .await {
+        Ok(record) => HttpResponse::Ok().json(json!({ "attempts": record.game_attempts })),
+        Err(sqlx::Error::RowNotFound) => HttpResponse::NotFound().json(json!({ "error": "User not found" })),
+        Err(_) => HttpResponse::InternalServerError().json(json!({ "error": "Failed to update attempts" })),
+    }
+}
+
+// Обновление времени следующего клейма
+#[post("/claim/{telegram_id}")]
+async fn update_claim_time(
+    pool: web::Data<PgPool>,
+    telegram_id: web::Path<i64>,
+) -> HttpResponse {
+    match sqlx::query!(
         r#"
         UPDATE users 
-        SET game_points = game_points + $1
-        WHERE telegram_id = $2
+        SET next_claim_time = NOW() + INTERVAL '10 hours'
+        WHERE telegram_id = $1
+        RETURNING next_claim_time
         "#,
-        game_result,
-        telegram_id
+        telegram_id.into_inner()
     )
-    .execute(pool.get_ref())
+    .fetch_one(pool.get_ref())
     .await {
-        Ok(result) => {
-            if result.rows_affected() == 0 {
-                HttpResponse::NotFound().json(json!({ "error": "User not found" }))
-            } else {
-                HttpResponse::Ok().json(json!({ "status": "success" }))
-            }
-        }
-        Err(_) => HttpResponse::InternalServerError().json(json!({ "error": "Failed to update game results" })),
-    };
-    
-    result
+        Ok(record) => HttpResponse::Ok().json(json!({ 
+            "next_claim_time": record.next_claim_time 
+        })),
+        Err(sqlx::Error::RowNotFound) => HttpResponse::NotFound().json(json!({ "error": "User not found" })),
+        Err(_) => HttpResponse::InternalServerError().json(json!({ "error": "Failed to update claim time" })),
+    }
 }
 
 #[actix_web::main]
@@ -49,17 +118,20 @@ async fn main() -> std::io::Result<()> {
     builder.set_certificate_chain_file("certs/fullchain.pem")?;
 
     HttpServer::new(move || {
-
         let cors = Cors::default()
-        .allowed_origin("https://kirillqa17.github.io")
-        .allow_any_method()
-        .allow_any_header()
-        .max_age(3600);
+            .allowed_origin("https://kirillqa17.github.io")
+            .allow_any_method()
+            .allow_any_header()
+            .max_age(3600);
 
         App::new()
             .wrap(cors)
             .app_data(web::Data::new(pool.clone()))
-            .service(web::resource("/result/{telegram_id}").route(web::post().to(result)))
+            .service(get_points)
+            .service(update_points)
+            .service(get_attempts)
+            .service(add_attempts)
+            .service(update_claim_time)
     })
     .bind_openssl("0.0.0.0:443", builder)?
     .run()
