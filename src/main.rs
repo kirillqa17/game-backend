@@ -30,7 +30,7 @@ async fn update_points(
     let points = data.into_inner();
     
     match sqlx::query!(
-        "UPDATE users SET game_points = $1 WHERE telegram_id = $2 RETURNING game_points",
+        "UPDATE users SET game_points = game_points + $1 WHERE telegram_id = $2 RETURNING game_points",
         points,
         telegram_id.into_inner()
     )
