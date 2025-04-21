@@ -3,6 +3,7 @@ use sqlx::postgres::PgPool;
 use serde_json::json;
 use actix_cors::Cors;
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
+use chrono::{DateTime, Utc};
 
 // Получение очков пользователя
 #[get("/points/{telegram_id}")]
@@ -89,14 +90,14 @@ async fn update_claim_time(
         UPDATE users 
         SET next_claim_time = NOW() + INTERVAL '10 hours'
         WHERE telegram_id = $1
-        RETURNING next_claim_time
+        RETURNING next_claim_time as "next_claim_time: DateTime<Utc>"
         "#,
         telegram_id.into_inner()
     )
     .fetch_one(pool.get_ref())
     .await {
         Ok(record) => HttpResponse::Ok().json(json!({ 
-            "next_claim_time": record.next_claim_time 
+            "next_claim_time": record.next_claim_time.to_rfc3339() 
         })),
         Err(sqlx::Error::RowNotFound) => HttpResponse::NotFound().json(json!({ "error": "User not found" })),
         Err(_) => HttpResponse::InternalServerError().json(json!({ "error": "Failed to update claim time" })),
