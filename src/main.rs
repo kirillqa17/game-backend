@@ -79,6 +79,27 @@ async fn add_attempts(
     }
 }
 
+#[post("/attempts/{telegram_id}")]
+async fn update_attempts(
+    pool: web::Data<PgPool>,
+    telegram_id: web::Path<i64>,
+    data: web::Json<i64>,
+) -> HttpResponse {
+    let new_attempts = data.into_inner();
+    
+    match sqlx::query!(
+        "UPDATE users SET game_attempts = $1 WHERE telegram_id = $2 RETURNING game_attempts",
+        new_attempts,
+        telegram_id.into_inner()
+    )
+    .fetch_one(pool.get_ref())
+    .await {
+        Ok(record) => HttpResponse::Ok().json(json!({ "attempts": record.game_attempts })),
+        Err(sqlx::Error::RowNotFound) => HttpResponse::NotFound().json(json!({ "error": "User not found" })),
+        Err(_) => HttpResponse::InternalServerError().json(json!({ "error": "Failed to update attempts" })),
+    }
+}
+
 #[post("/claim/{telegram_id}")]
 async fn update_claim_time(
     pool: web::Data<PgPool>,
@@ -157,8 +178,10 @@ async fn main() -> std::io::Result<()> {
             .service(update_points)
             .service(get_attempts)
             .service(add_attempts)
+            .service(update_attempts)
             .service(update_claim_time)
             .service(get_claim_time)
+
     })
     .bind_openssl("0.0.0.0:443", builder)?
     .run()
