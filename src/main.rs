@@ -79,7 +79,6 @@ async fn add_attempts(
     }
 }
 
-// Обновление времени следующего клейма
 #[post("/claim/{telegram_id}")]
 async fn update_claim_time(
     pool: web::Data<PgPool>,
@@ -111,7 +110,7 @@ async fn get_claim_time(
 ) -> HttpResponse {
     match sqlx::query!(
         r#"
-        SELECT next_claim_time as "next_claim_time: DateTime<Utc>"
+        SELECT next_claim_time as "next_claim_time: Option<DateTime<Utc>>"
         FROM users 
         WHERE telegram_id = $1
         "#,
@@ -119,9 +118,12 @@ async fn get_claim_time(
     )
     .fetch_one(pool.get_ref())
     .await {
-        Ok(record) => HttpResponse::Ok().json(json!({ 
-            "next_claim_time": record.next_claim_time.map(|t| t.to_rfc3339()) 
-        })),
+        Ok(record) => {
+            let next_claim_time = record.next_claim_time.map(|t| t.to_rfc3339());
+            HttpResponse::Ok().json(json!({ 
+                "next_claim_time": next_claim_time
+            }))
+        },
         Err(sqlx::Error::RowNotFound) => HttpResponse::NotFound().json(json!({ "error": "User not found" })),
         Err(_) => HttpResponse::InternalServerError().json(json!({ "error": "Database error" })),
     }
