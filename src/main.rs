@@ -150,6 +150,47 @@ async fn get_claim_time(
     }
 }
 
+#[get("/record/{telegram_id}")]
+async fn get_record(pool: web::Data<PgPool>, telegram_id: web::Path<i64>) -> HttpResponse {
+    match sqlx::query!(
+        "SELECT record_flappy FROM users WHERE telegram_id = $1",
+        telegram_id.into_inner()
+    )
+    .fetch_one(pool.get_ref())
+    .await {
+        Ok(record) => HttpResponse::Ok().json(json!({ "record": record.record_flappy })),
+        Err(sqlx::Error::RowNotFound) => HttpResponse::NotFound().json(json!({ "error": "User not found" })),
+        Err(_) => HttpResponse::InternalServerError().json(json!({ "error": "Database error" })),
+    }
+}
+
+// Обновление рекорда пользователя
+#[post("/record/{telegram_id}")]
+async fn update_record(
+    pool: web::Data<PgPool>,
+    telegram_id: web::Path<i64>,
+    data: web::Json<i64>,
+) -> HttpResponse {
+    let new_record = data.into_inner();
+    
+    match sqlx::query!(
+        r#"
+        UPDATE users 
+        SET record_flappy = GREATEST(COALESCE(record_flappy, 0), $1)
+        WHERE telegram_id = $2 
+        RETURNING record_flappy
+        "#,
+        new_record,
+        telegram_id.into_inner()
+    )
+    .fetch_one(pool.get_ref())
+    .await {
+        Ok(record) => HttpResponse::Ok().json(json!({ "record": record.record_flappy })),
+        Err(sqlx::Error::RowNotFound) => HttpResponse::NotFound().json(json!({ "error": "User not found" })),
+        Err(_) => HttpResponse::InternalServerError().json(json!({ "error": "Failed to update record" })),
+    }
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenv::dotenv().ok();
@@ -181,6 +222,8 @@ async fn main() -> std::io::Result<()> {
             .service(update_attempts)
             .service(update_claim_time)
             .service(get_claim_time)
+            .service(get_record)
+            .service(update_record)
 
     })
     .bind_openssl("0.0.0.0:443", builder)?
