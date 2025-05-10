@@ -202,8 +202,8 @@ async fn main() -> std::io::Result<()> {
 
     // Настройка SSL
     let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls())?;
-    builder.set_private_key_file("/etc/letsencrypt/live/svoivpn.duckdns.org/fullchain.pem", SslFiletype::PEM)?;
-    builder.set_certificate_chain_file("certs/fullchain.pem")?;
+    builder.set_private_key_file("/etc/letsencrypt/live/svoivpn.duckdns.org/privkey.pem", SslFiletype::PEM)?;
+    builder.set_certificate_chain_file("/etc/letsencrypt/live/svoivpn.duckdns.org/fullchain.pem")?;
 
     HttpServer::new(move || {
         let cors = Cors::default()
