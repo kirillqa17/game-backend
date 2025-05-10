@@ -202,7 +202,7 @@ async fn main() -> std::io::Result<()> {
 
     // Настройка SSL
     let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls())?;
-    builder.set_private_key_file("certs/privkey.key")?;
+    builder.set_private_key_file("certs/privkey.key", SslFiletype::PEM)?;
     builder.set_certificate_chain_file("certs/fullchain.pem")?;
 
     HttpServer::new(move || {
