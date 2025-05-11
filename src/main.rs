@@ -2,7 +2,6 @@ use actix_web::{web, App, HttpResponse, HttpServer, get, post};
 use sqlx::postgres::PgPool;
 use serde_json::json;
 use actix_cors::Cors;
-use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 use chrono::{DateTime, Utc};
 
 // Получение очков пользователя
@@ -200,11 +199,6 @@ async fn main() -> std::io::Result<()> {
         .await
         .unwrap();
 
-    // Настройка SSL
-    let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls())?;
-    builder.set_private_key_file("/etc/letsencrypt/live/game.svoivpn.duckdns.org/privkey.pem", SslFiletype::PEM)?;
-    builder.set_certificate_chain_file("/etc/letsencrypt/live/game.svoivpn.duckdns.org/fullchain.pem")?;
-
     HttpServer::new(move || {
         let cors = Cors::default()
             .allowed_origin("https://kirillqa17.github.io")
@@ -226,7 +220,7 @@ async fn main() -> std::io::Result<()> {
             .service(update_record)
 
     })
-    .bind_openssl("0.0.0.0:1904", builder)?
+    .bind("0.0.0.0:1904")?
     .run()
     .await
 }
