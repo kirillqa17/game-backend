@@ -334,7 +334,7 @@ async fn exchange_coins(
     };
     
     // 1. Проверяем, если у пользователя достаточно монет
-    match sqlx::query!(
+    let user_points = match sqlx::query!(
         "SELECT game_points FROM users WHERE telegram_id = $1 FOR UPDATE",
         telegram_id
     )
@@ -351,8 +351,8 @@ async fn exchange_coins(
         Err(_) => return HttpResponse::InternalServerError().json(json!({ "error": "Database error" })),
     }
     
-    let remaining_coins = record.game_points - coins;
-
+    let remaining_coins = user_points - coins;
+    
     // 2. Списываем монеты
     match sqlx::query!(
         "UPDATE users SET game_points = game_points - $1 WHERE telegram_id = $2 RETURNING game_points",
