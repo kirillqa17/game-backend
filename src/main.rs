@@ -381,7 +381,7 @@ async fn exchange_coins(
         WHERE telegram_id = $2
         RETURNING subscription_end as "subscription_end: DateTime<Utc>"
         "#,
-        days,
+        days as f64,
         telegram_id.into_inner()
     )
     .fetch_one(&mut *transaction)
