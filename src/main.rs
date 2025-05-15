@@ -36,7 +36,7 @@ async fn get_user_tasks(pool: web::Data<PgPool>, telegram_id: web::Path<i64>) ->
             t.description,
             t.reward_coins,
             ut.progress,
-            t.target,
+            ut.target,
             ut.is_completed
         FROM tasks t
         JOIN user_tasks ut ON t.id = ut.task_id
@@ -73,7 +73,7 @@ async fn update_task_progress(
             SET progress = LEAST($1, target),
                 is_completed = (LEAST($1, target) >= target,
                 completed_at = CASE 
-                    WHEN (LEAST($1, target) >= target AND NOT is_completed THEN NOW() 
+                    WHEN (LEAST($1, target) >= target) AND NOT is_completed THEN NOW()
                     ELSE completed_at 
                 END
             WHERE user_id = $2 AND task_id = $3
@@ -320,7 +320,7 @@ async fn assign_new_tasks(pool: web::Data<PgPool>) -> HttpResponse {
     match sqlx::query!(
         r#"
         INSERT INTO user_tasks (user_id, task_id, target)
-        SELECT u.id, t.id, t.target
+        SELECT u.id, t.id, ut.target
         FROM users u
         CROSS JOIN tasks t
         WHERE NOT EXISTS (
