@@ -3,6 +3,131 @@ use sqlx::postgres::PgPool;
 use serde_json::json;
 use actix_cors::Cors;
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Task {
+    id: i32,
+    title: String,
+    description: String,
+    reward_coins: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct UserTask {
+    task_id: i32,
+    title: String,
+    description: String,
+    reward_coins: i64,
+    progress: i32,
+    target: i32,
+    is_completed: bool,
+}
+
+// Получение списка заданий для пользователя
+#[get("/tasks/{telegram_id}")]
+async fn get_user_tasks(pool: web::Data<PgPool>, telegram_id: web::Path<i64>) -> HttpResponse {
+    match sqlx::query_as!(
+        UserTask,
+        r#"
+        SELECT 
+            t.id as task_id,
+            t.title,
+            t.description,
+            t.reward_coins,
+            ut.progress,
+            t.target,
+            ut.is_completed
+        FROM tasks t
+        JOIN user_tasks ut ON t.id = ut.task_id
+        WHERE ut.user_id = $1
+        ORDER BY ut.is_completed, t.id
+        "#,
+        telegram_id.into_inner()
+    )
+    .fetch_all(pool.get_ref())
+    .await {
+        Ok(tasks) => HttpResponse::Ok().json(tasks),
+        Err(sqlx::Error::RowNotFound) => HttpResponse::NotFound().json(json!({ "error": "User not found" })),
+        Err(e) => {
+            println!("Database error: {:?}", e);
+            HttpResponse::InternalServerError().json(json!({ "error": "Database error" }))
+        },
+    }
+}
+
+// Обновление прогресса задания
+#[post("/tasks/{telegram_id}/update/{task_id}")]
+async fn update_task_progress(
+    pool: web::Data<PgPool>,
+    path: web::Path<(i64, i32)>,
+    data: web::Json<i32>,
+) -> HttpResponse {
+    let (telegram_id, task_id) = path.into_inner();
+    let progress = data.into_inner();
+    
+    match sqlx::query!(
+        r#"
+        WITH updated AS (
+            UPDATE user_tasks 
+            SET progress = LEAST($1, target),
+                is_completed = (LEAST($1, target) >= target,
+                completed_at = CASE 
+                    WHEN (LEAST($1, target) >= target AND NOT is_completed THEN NOW() 
+                    ELSE completed_at 
+                END
+            WHERE user_id = $2 AND task_id = $3
+            RETURNING *
+        )
+        SELECT 
+            u.is_completed as "is_completed!",
+            u.progress as "progress!",
+            t.reward_coins as "reward_coins!"
+        FROM updated u
+        JOIN tasks t ON u.task_id = t.id
+        "#,
+        progress,
+        telegram_id,
+        task_id
+    )
+    .fetch_one(pool.get_ref())
+    .await {
+        Ok(record) => {
+            let response = if record.is_completed {
+                // Если задание выполнено, добавляем награду
+                match sqlx::query!(
+                    "UPDATE users SET game_points = game_points + $1 WHERE telegram_id = $2 RETURNING game_points",
+                    record.reward_coins,
+                    telegram_id
+                )
+                .fetch_one(pool.get_ref())
+                .await {
+                    Ok(user) => json!({
+                        "status": "completed",
+                        "progress": record.progress,
+                        "reward": record.reward_coins,
+                        "new_points": user.game_points
+                    }),
+                    Err(_) => json!({
+                        "status": "completed",
+                        "progress": record.progress,
+                        "reward": record.reward_coins,
+                        "error": "Failed to add reward"
+                    })
+                }
+            } else {
+                json!({
+                    "status": "updated",
+                    "progress": record.progress
+                })
+            };
+            
+            HttpResponse::Ok().json(response)
+        },
+        Err(sqlx::Error::RowNotFound) => HttpResponse::NotFound().json(json!({ "error": "Task not found" })),
+        Err(_) => HttpResponse::InternalServerError().json(json!({ "error": "Failed to update task" })),
+    }
+}
 
 // Получение очков пользователя
 #[get("/points/{telegram_id}")]
@@ -190,6 +315,31 @@ async fn update_record(
     }
 }
 
+#[post("/tasks/assign-new")]
+async fn assign_new_tasks(pool: web::Data<PgPool>) -> HttpResponse {
+    match sqlx::query!(
+        r#"
+        INSERT INTO user_tasks (user_id, task_id, target)
+        SELECT u.id, t.id, t.target
+        FROM users u
+        CROSS JOIN tasks t
+        WHERE NOT EXISTS (
+            SELECT 1 FROM user_tasks ut 
+            WHERE ut.user_id = u.id AND ut.task_id = t.id
+        )
+        RETURNING COUNT(*) as count
+        "#,
+    )
+    .fetch_one(pool.get_ref())
+    .await {
+        Ok(result) => HttpResponse::Ok().json(json!({ "assigned": result.count })),
+        Err(e) => {
+            println!("Error assigning tasks: {:?}", e);
+            HttpResponse::InternalServerError().json(json!({ "error": "Failed to assign tasks" }))
+        },
+    }
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenv::dotenv().ok();
@@ -218,6 +368,9 @@ async fn main() -> std::io::Result<()> {
             .service(get_claim_time)
             .service(get_record)
             .service(update_record)
+            .service(get_user_tasks)
+            .service(update_task_progress)
+            .service(assign_new_tasks)
 
     })
     .bind("0.0.0.0:1904")?
