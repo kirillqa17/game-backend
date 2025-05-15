@@ -343,7 +343,7 @@ async fn exchange_coins(
     // 1. Проверяем, есть ли у пользователя достаточно монет
     match sqlx::query!(
         "SELECT game_points FROM users WHERE telegram_id = $1 FOR UPDATE",
-        telegram_id.into_inner()
+        telegram_id
     )
     .fetch_one(&mut *transaction)
     .await {
@@ -362,7 +362,7 @@ async fn exchange_coins(
     match sqlx::query!(
         "UPDATE users SET game_points = game_points - $1 WHERE telegram_id = $2 RETURNING game_points",
         coins - remaining_coins, // списываем только кратное 30
-        telegram_id.into_inner()
+        telegram_id
     )
     .fetch_one(&mut *transaction)
     .await {
@@ -383,7 +383,7 @@ async fn exchange_coins(
         RETURNING subscription_end as "subscription_end: DateTime<Utc>"
         "#,
         days as f64,
-        telegram_id.into_inner()
+        telegram_id
     )
     .fetch_one(&mut *transaction)
     .await {
