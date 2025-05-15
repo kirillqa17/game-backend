@@ -334,23 +334,28 @@ async fn exchange_coins(
     };
     
     // 1. Проверяем, если у пользователя достаточно монет
-    let user_points = match sqlx::query!(
-        "SELECT game_points FROM users WHERE telegram_id = $1 FOR UPDATE",
-        telegram_id
+    let user_points: i64 = match sqlx::query!(
+    "SELECT game_points FROM users WHERE telegram_id = $1 FOR UPDATE",
+    telegram_id
     )
     .fetch_one(&mut *transaction)
     .await {
-        Ok(record) => {
-            if record.game_points < coins {
-                return HttpResponse::BadRequest().json(json!({
-                    "error": "Not enough coins"
-                }));
-            }
-        },
-        Err(sqlx::Error::RowNotFound) => return HttpResponse::NotFound().json(json!({ "error": "User not found" })),
-        Err(_) => return HttpResponse::InternalServerError().json(json!({ "error": "Database error" })),
+        Ok(record) => record.game_points,
+        Err(sqlx::Error::RowNotFound) => {
+            return HttpResponse::NotFound().json(json!({ "error": "User not found" }));
+        }
+        Err(e) => {
+            eprintln!("Database error: {:?}", e);
+            return HttpResponse::InternalServerError().json(json!({ "error": "Database error" }));
+        }
     };
-    
+
+    if user_points < coins {
+        return HttpResponse::BadRequest().json(json!({
+            "error": "Not enough coins"
+        }));
+    }
+
     let remaining_coins = user_points - coins;
 
     // 2. Списываем монеты
