@@ -71,7 +71,7 @@ async fn update_task_progress(
         WITH updated AS (
             UPDATE user_tasks 
             SET progress = LEAST($1, target),
-                is_completed = (LEAST($1, target) >= target,
+                is_completed = (LEAST($1, target) >= target),
                 completed_at = CASE 
                     WHEN (LEAST($1, target) >= target) AND NOT is_completed THEN NOW()
                     ELSE completed_at 
@@ -315,30 +315,6 @@ async fn update_record(
     }
 }
 
-#[post("/tasks/assign-new")]
-async fn assign_new_tasks(pool: web::Data<PgPool>) -> HttpResponse {
-    match sqlx::query!(
-        r#"
-        INSERT INTO user_tasks (user_id, task_id, target)
-        SELECT u.id, t.id, ut.target
-        FROM users u
-        CROSS JOIN tasks t
-        WHERE NOT EXISTS (
-            SELECT 1 FROM user_tasks ut 
-            WHERE ut.user_id = u.id AND ut.task_id = t.id
-        )
-        RETURNING COUNT(*) as count
-        "#,
-    )
-    .fetch_one(pool.get_ref())
-    .await {
-        Ok(result) => HttpResponse::Ok().json(json!({ "assigned": result.count })),
-        Err(e) => {
-            println!("Error assigning tasks: {:?}", e);
-            HttpResponse::InternalServerError().json(json!({ "error": "Failed to assign tasks" }))
-        },
-    }
-}
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -370,7 +346,6 @@ async fn main() -> std::io::Result<()> {
             .service(update_record)
             .service(get_user_tasks)
             .service(update_task_progress)
-            .service(assign_new_tasks)
 
     })
     .bind("0.0.0.0:1904")?
