@@ -349,10 +349,10 @@ async fn exchange_coins(
         },
         Err(sqlx::Error::RowNotFound) => return HttpResponse::NotFound().json(json!({ "error": "User not found" })),
         Err(_) => return HttpResponse::InternalServerError().json(json!({ "error": "Database error" })),
-    }
+    };
     
     let remaining_coins = user_points - coins;
-    
+
     // 2. Списываем монеты
     match sqlx::query!(
         "UPDATE users SET game_points = game_points - $1 WHERE telegram_id = $2 RETURNING game_points",
