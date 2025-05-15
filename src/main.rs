@@ -321,18 +321,11 @@ async fn exchange_coins(
     telegram_id: web::Path<i64>,
     data: web::Json<i64>,
 ) -> HttpResponse {
-    let coins = data.into_inner();
+    let days = data.into_inner();
     let telegram_id = telegram_id.into_inner();
     const COINS_PER_DAY: i64 = 30; // 30 монет = 1 день подписки
-    
-    if coins < COINS_PER_DAY {
-        return HttpResponse::BadRequest().json(json!({
-            "error": format!("Minimum {} coins required for exchange", COINS_PER_DAY)
-        }));
-    }
-    
-    let days = coins / COINS_PER_DAY;
-    let remaining_coins = coins % COINS_PER_DAY;
+     
+    let coins = days * COINS_PER_DAY;
     
     // Начинаем транзакцию
     let mut transaction = match pool.begin().await {
@@ -340,7 +333,7 @@ async fn exchange_coins(
         Err(_) => return HttpResponse::InternalServerError().json(json!({ "error": "Failed to start transaction" })),
     };
     
-    // 1. Проверяем, есть ли у пользователя достаточно монет
+    // 1. Проверяем, если у пользователя достаточно монет
     match sqlx::query!(
         "SELECT game_points FROM users WHERE telegram_id = $1 FOR UPDATE",
         telegram_id
@@ -358,10 +351,12 @@ async fn exchange_coins(
         Err(_) => return HttpResponse::InternalServerError().json(json!({ "error": "Database error" })),
     }
     
+    let remaining_coins = record.game_points - coins;
+
     // 2. Списываем монеты
     match sqlx::query!(
         "UPDATE users SET game_points = game_points - $1 WHERE telegram_id = $2 RETURNING game_points",
-        coins - remaining_coins, // списываем только кратное 30
+        coins,
         telegram_id
     )
     .fetch_one(&mut *transaction)
@@ -395,10 +390,9 @@ async fn exchange_coins(
             
             HttpResponse::Ok().json(json!({
                 "success": true,
-                "new_coin_balance": coins - remaining_coins,
+                "new_coin_balance": remaining_coins,
                 "subscription_end": record.subscription_end.to_rfc3339(),
                 "days_added": days,
-                "remaining_coins": remaining_coins,
                 "is_active": 1
             }))
         },
