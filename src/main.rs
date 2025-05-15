@@ -322,6 +322,7 @@ async fn exchange_coins(
     data: web::Json<i64>,
 ) -> HttpResponse {
     let coins = data.into_inner();
+    let telegram_id = telegram_id.into_inner();
     const COINS_PER_DAY: i64 = 30; // 30 монет = 1 день подписки
     
     if coins < COINS_PER_DAY {
