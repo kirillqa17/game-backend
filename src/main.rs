@@ -315,6 +315,98 @@ async fn update_record(
     }
 }
 
+#[post("/exchange/{telegram_id}")]
+async fn exchange_coins(
+    pool: web::Data<PgPool>,
+    telegram_id: web::Path<i64>,
+    data: web::Json<i64>,
+) -> HttpResponse {
+    let coins = data.into_inner();
+    const COINS_PER_DAY: i64 = 30; // 30 монет = 1 день подписки
+    
+    if coins < COINS_PER_DAY {
+        return HttpResponse::BadRequest().json(json!({
+            "error": format!("Minimum {} coins required for exchange", COINS_PER_DAY)
+        }));
+    }
+    
+    let days = coins / COINS_PER_DAY;
+    let remaining_coins = coins % COINS_PER_DAY;
+    
+    // Начинаем транзакцию
+    let mut transaction = match pool.begin().await {
+        Ok(t) => t,
+        Err(_) => return HttpResponse::InternalServerError().json(json!({ "error": "Failed to start transaction" })),
+    };
+    
+    // 1. Проверяем, есть ли у пользователя достаточно монет
+    match sqlx::query!(
+        "SELECT game_points FROM users WHERE telegram_id = $1 FOR UPDATE",
+        telegram_id.into_inner()
+    )
+    .fetch_one(&mut *transaction)
+    .await {
+        Ok(record) => {
+            if record.game_points < coins {
+                return HttpResponse::BadRequest().json(json!({
+                    "error": "Not enough coins"
+                }));
+            }
+        },
+        Err(sqlx::Error::RowNotFound) => return HttpResponse::NotFound().json(json!({ "error": "User not found" })),
+        Err(_) => return HttpResponse::InternalServerError().json(json!({ "error": "Database error" })),
+    }
+    
+    // 2. Списываем монеты
+    match sqlx::query!(
+        "UPDATE users SET game_points = game_points - $1 WHERE telegram_id = $2 RETURNING game_points",
+        coins - remaining_coins, // списываем только кратное 30
+        telegram_id.into_inner()
+    )
+    .fetch_one(&mut *transaction)
+    .await {
+        Ok(_) => {},
+        Err(_) => return HttpResponse::InternalServerError().json(json!({ "error": "Failed to update coins" })),
+    }
+    
+    // 3. Добавляем дни подписки
+    match sqlx::query!(
+        r#"
+        UPDATE users 
+        SET subscription_end = CASE 
+            WHEN subscription_end > NOW() THEN subscription_end + ($1 * INTERVAL '1 day')
+            ELSE NOW() + ($1 * INTERVAL '1 day')
+        END,
+        is_active = GREATEST(is_active, 1)
+        WHERE telegram_id = $2
+        RETURNING subscription_end as "subscription_end: DateTime<Utc>"
+        "#,
+        days,
+        telegram_id.into_inner()
+    )
+    .fetch_one(&mut *transaction)
+    .await {
+        Ok(record) => {
+            // Коммитим транзакцию
+            if let Err(_) = transaction.commit().await {
+                return HttpResponse::InternalServerError().json(json!({ "error": "Failed to commit transaction" }));
+            }
+            
+            HttpResponse::Ok().json(json!({
+                "success": true,
+                "new_coin_balance": coins - remaining_coins,
+                "subscription_end": record.subscription_end.to_rfc3339(),
+                "days_added": days,
+                "remaining_coins": remaining_coins,
+                "is_active": 1
+            }))
+        },
+        Err(e) => {
+            println!("Database error: {:?}", e);
+            HttpResponse::InternalServerError().json(json!({ "error": "Failed to update subscription" }))
+        },
+    }
+}
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -344,8 +436,7 @@ async fn main() -> std::io::Result<()> {
             .service(get_claim_time)
             .service(get_record)
             .service(update_record)
-            .service(get_user_tasks)
-            .service(update_task_progress)
+            .service(exchange_coins)
 
     })
     .bind("0.0.0.0:1904")?
