@@ -416,6 +416,7 @@ async fn exchange_coins(
     let api_response = match http_client
         .patch(&api_url)
         .header("Content-Type", "application/json")
+        .timeout(std::time::Duration::from_secs(5))
         .json(&request_body)
         .send()
         .await {
