@@ -4,6 +4,7 @@ use serde_json::json;
 use actix_cors::Cors;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use reqwest::Client as HttpClient;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Task {
@@ -326,6 +327,8 @@ async fn exchange_coins(
     const COINS_PER_DAY: i64 = 30; // 30 монет = 1 день подписки
      
     let coins = days * COINS_PER_DAY;
+
+    let http_client = HttpClient::new();
     
     // Начинаем транзакцию
     let mut transaction = match pool.begin().await {
@@ -333,14 +336,21 @@ async fn exchange_coins(
         Err(_) => return HttpResponse::InternalServerError().json(json!({ "error": "Failed to start transaction" })),
     };
     
-    // 1. Проверяем, если у пользователя достаточно монет
-    let user_points: i64 = match sqlx::query!(
-    "SELECT game_points FROM users WHERE telegram_id = $1 FOR UPDATE",
-    telegram_id
+    // 1. Проверяем, если у пользователя достаточно монет и получаем его текущий план
+    let (user_points, current_plan): (i64, String) = match sqlx::query!(
+        r#"
+        SELECT 
+            game_points, 
+            plan 
+        FROM users 
+        WHERE telegram_id = $1 
+        FOR UPDATE
+        "#,
+        telegram_id
     )
     .fetch_one(&mut *transaction)
     .await {
-        Ok(record) => record.game_points,
+        Ok(record) => (record.game_points, record.plan),
         Err(sqlx::Error::RowNotFound) => {
             return HttpResponse::NotFound().json(json!({ "error": "User not found" }));
         }
@@ -352,7 +362,8 @@ async fn exchange_coins(
 
     if user_points < coins {
         return HttpResponse::BadRequest().json(json!({
-            "error": "Not enough coins"
+            "error": "Not enough coins",
+            "current_plan": current_plan
         }));
     }
 
@@ -371,41 +382,47 @@ async fn exchange_coins(
     }
     
     // 3. Добавляем дни подписки
-    match sqlx::query!(
-        r#"
-        UPDATE users 
-        SET subscription_end = CASE 
-            WHEN subscription_end > NOW() THEN subscription_end + ($1 * INTERVAL '1 day')
-            ELSE NOW() + ($1 * INTERVAL '1 day')
-        END,
-        is_active = GREATEST(is_active, 1)
-        WHERE telegram_id = $2
-        RETURNING subscription_end as "subscription_end: DateTime<Utc>"
-        "#,
-        days as f64,
-        telegram_id
-    )
-    .fetch_one(&mut *transaction)
+    let api_response = match http_client
+    .patch(&format!("http://localhost:8080/users/{}/extend", telegram_id))
+    .header("Content-Type", "application/json")
+    .json(&json!({
+        "days": days,
+        "plan": current_plan
+    }))
+    .send()
     .await {
-        Ok(record) => {
-            // Коммитим транзакцию
-            if let Err(_) = transaction.commit().await {
-                return HttpResponse::InternalServerError().json(json!({ "error": "Failed to commit transaction" }));
-            }
-            
-            HttpResponse::Ok().json(json!({
-                "success": true,
-                "new_coin_balance": remaining_coins,
-                "subscription_end": record.subscription_end.to_rfc3339(),
-                "days_added": days,
-                "is_active": 1
-            }))
-        },
+        Ok(resp) => resp,
         Err(e) => {
-            println!("Database error: {:?}", e);
-            HttpResponse::InternalServerError().json(json!({ "error": "Failed to update subscription" }))
+            println!("API call error: {:?}", e);
+            return HttpResponse::InternalServerError().json(json!({ "error": "Failed to call extend subscription API" }));
         },
+    };
+
+    if !api_response.status().is_success() {
+        return HttpResponse::InternalServerError().json(json!({ 
+            "error": "Failed to extend subscription",
+            "api_status": api_response.status().as_u16(),
+        }));
     }
+
+    let api_response_body = match api_response.json::<serde_json::Value>().await {
+        Ok(body) => body,
+        Err(e) => {
+            println!("Failed to parse API response: {:?}", e);
+            return HttpResponse::InternalServerError().json(json!({ "error": "Failed to parse API response" }));
+        },
+    };
+
+    if let Err(_) = transaction.commit().await {
+        return HttpResponse::InternalServerError().json(json!({ "error": "Failed to commit transaction" }));
+    }
+
+    HttpResponse::Ok().json(json!({
+        "new_coin_balance": remaining_coins,
+        "subscription_end": api_response_body["subscription_end"].as_str().unwrap_or(""),
+        "days_added": days,
+        "is_active": 1
+    }))
 }
 
 #[actix_web::main]
