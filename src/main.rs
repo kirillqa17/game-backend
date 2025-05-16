@@ -356,7 +356,6 @@ async fn exchange_coins(
             plan 
         FROM users 
         WHERE telegram_id = $1 
-        FOR UPDATE
         "#,
         telegram_id
     )
@@ -404,7 +403,7 @@ async fn exchange_coins(
     }
     
     // 3. Добавляем дни подписки
-    let api_url = format!("127.0.0.1:8080/users/{}/extend", telegram_id);
+    let api_url = format!("http://127.0.0.1:8080/users/{}/extend", telegram_id);
     let request_body = json!({
         "days": days,
         "plan": current_plan
