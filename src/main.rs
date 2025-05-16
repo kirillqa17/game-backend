@@ -333,7 +333,7 @@ async fn exchange_coins(
     // Начинаем транзакцию
     let mut transaction = match pool.begin().await {
         Ok(t) => t,
-        Err(e) => {
+        Err(_e) => {
             return HttpResponse::InternalServerError().json(json!({ "error": "Failed to start transaction" }));
         },
     };
@@ -355,7 +355,7 @@ async fn exchange_coins(
         Err(sqlx::Error::RowNotFound) => {
             return HttpResponse::NotFound().json(json!({ "error": "User not found" }));
         }
-        Err(e) => {
+        Err(_e) => {
             return HttpResponse::InternalServerError().json(json!({ "error": "Database error" }));
         }
     };
@@ -378,7 +378,7 @@ async fn exchange_coins(
     .fetch_one(&mut *transaction)
     .await {
         Ok(_) => (),
-        Err(e) => {
+        Err(_e) => {
             return HttpResponse::InternalServerError().json(json!({ "error": "Failed to update coins" }));
         },
     }
@@ -431,6 +431,7 @@ async fn exchange_coins(
         Ok(body) => {
             let subscription_end = body["subscription_end"].as_str().unwrap_or_default();
             HttpResponse::Ok().json(json!({
+                "success": true,
                 "new_coin_balance": remaining_coins,
                 "subscription_end": subscription_end,
                 "days_added": days,
