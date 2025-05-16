@@ -322,34 +322,24 @@ async fn exchange_coins(
     telegram_id: web::Path<i64>,
     data: web::Json<i64>,
 ) -> HttpResponse {
-    println!("[DEBUG] Starting exchange_coins function");
-    
     let days = data.into_inner();
     let telegram_id = telegram_id.into_inner();
-    println!("[DEBUG] Request params - telegram_id: {}, days: {}", telegram_id, days);
     
     const COINS_PER_DAY: i64 = 30;
     let coins = days * COINS_PER_DAY;
-    println!("[DEBUG] Calculating coins needed: {} coins ({} days * {})", coins, days, COINS_PER_DAY);
 
     let http_client = HttpClient::new();
     
     // Начинаем транзакцию
-    println!("[DEBUG] Starting database transaction");
     let mut transaction = match pool.begin().await {
-        Ok(t) => {
-            println!("[DEBUG] Transaction started successfully");
-            t
-        },
+        Ok(t) => t,
         Err(e) => {
-            println!("[ERROR] Failed to start transaction: {:?}", e);
             return HttpResponse::InternalServerError().json(json!({ "error": "Failed to start transaction" }));
         },
     };
     
     // 1. Проверяем баланс и план пользователя
-    println!("[DEBUG] Checking user balance and plan for telegram_id: {}", telegram_id);
-    let (user_points, current_plan): (i64, String) = match sqlx::query!(
+    let (user_points, current_plan) = match sqlx::query!(
         r#"
         SELECT 
             game_points, 
@@ -361,22 +351,16 @@ async fn exchange_coins(
     )
     .fetch_one(&mut *transaction)
     .await {
-        Ok(record) => {
-            println!("[DEBUG] User found - points: {}, plan: {}", record.game_points, record.plan);
-            (record.game_points, record.plan)
-        },
+        Ok(record) => (record.game_points, record.plan),
         Err(sqlx::Error::RowNotFound) => {
-            println!("[ERROR] User not found with telegram_id: {}", telegram_id);
             return HttpResponse::NotFound().json(json!({ "error": "User not found" }));
         }
         Err(e) => {
-            println!("[ERROR] Database error when fetching user: {:?}", e);
             return HttpResponse::InternalServerError().json(json!({ "error": "Database error" }));
         }
     };
 
     if user_points < coins {
-        println!("[WARN] Not enough coins: has {}, needs {}", user_points, coins);
         return HttpResponse::BadRequest().json(json!({
             "error": "Not enough coins",
             "current_plan": current_plan
@@ -384,10 +368,8 @@ async fn exchange_coins(
     }
 
     let remaining_coins = user_points - coins;
-    println!("[DEBUG] Sufficient coins. Remaining after exchange: {}", remaining_coins);
 
     // 2. Списываем монеты
-    println!("[DEBUG] Deducting coins from user balance");
     match sqlx::query!(
         "UPDATE users SET game_points = game_points - $1 WHERE telegram_id = $2 RETURNING game_points",
         coins,
@@ -395,16 +377,13 @@ async fn exchange_coins(
     )
     .fetch_one(&mut *transaction)
     .await {
-        Ok(_) => println!("[DEBUG] Coins deducted successfully"),
+        Ok(_) => (),
         Err(e) => {
-            println!("[ERROR] Failed to deduct coins: {:?}", e);
             return HttpResponse::InternalServerError().json(json!({ "error": "Failed to update coins" }));
         },
     }
 
-    println!("[DEBUG] Committing transaction");
     if let Err(e) = transaction.commit().await {
-        println!("[ERROR] Failed to commit transaction: {:?}", e);
         return HttpResponse::InternalServerError().json(json!({ 
             "error": "Failed to commit transaction",
             "details": e.to_string()
@@ -418,9 +397,6 @@ async fn exchange_coins(
         "plan": current_plan
     });
     
-    println!("[DEBUG] Making API request to: {}", api_url);
-    println!("[DEBUG] Request body: {}", request_body);
-    
     let api_response = match http_client
         .patch(&api_url)
         .header("Content-Type", "application/json")
@@ -428,12 +404,8 @@ async fn exchange_coins(
         .json(&request_body)
         .send()
         .await {
-            Ok(resp) => {
-                println!("[DEBUG] API response status: {}", resp.status());
-                resp
-            },
+            Ok(resp) => resp,
             Err(e) => {
-                println!("[ERROR] API call failed: {:?}", e);
                 return HttpResponse::InternalServerError().json(json!({ 
                     "error": "Failed to call extend subscription API",
                     "details": e.to_string() 
@@ -448,7 +420,6 @@ async fn exchange_coins(
             Err(e) => format!("Failed to read error response: {}", e),
         };
         
-        println!("[ERROR] API returned error status: {}. Response: {}", status, error_text);
         return HttpResponse::InternalServerError().json(json!({ 
             "error": "Failed to extend subscription",
             "api_status": status.as_u16(),
@@ -456,30 +427,23 @@ async fn exchange_coins(
         }));
     }
 
-    println!("[DEBUG] Parsing API response");
-    let api_response_body = match api_response.json::<serde_json::Value>().await {
+    match api_response.json::<serde_json::Value>().await {
         Ok(body) => {
-            println!("[DEBUG] API response parsed successfully: {:?}", body);
-            body
+            let subscription_end = body["subscription_end"].as_str().unwrap_or_default();
+            HttpResponse::Ok().json(json!({
+                "new_coin_balance": remaining_coins,
+                "subscription_end": subscription_end,
+                "days_added": days,
+                "is_active": 1
+            }))
         },
         Err(e) => {
-            println!("[ERROR] Failed to parse API response: {:?}", e);
-            return HttpResponse::InternalServerError().json(json!({ 
+            HttpResponse::InternalServerError().json(json!({ 
                 "error": "Failed to parse API response",
                 "details": e.to_string()
-            }));
+            }))
         },
-    };
-
-    
-
-    println!("[DEBUG] Exchange completed successfully");
-    HttpResponse::Ok().json(json!({
-        "new_coin_balance": remaining_coins,
-        "subscription_end": api_response_body["subscription_end"].as_str().unwrap_or(""),
-        "days_added": days,
-        "is_active": 1
-    }))
+    }
 }
 
 #[actix_web::main]
