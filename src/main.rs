@@ -401,6 +401,15 @@ async fn exchange_coins(
             return HttpResponse::InternalServerError().json(json!({ "error": "Failed to update coins" }));
         },
     }
+
+    println!("[DEBUG] Committing transaction");
+    if let Err(e) = transaction.commit().await {
+        println!("[ERROR] Failed to commit transaction: {:?}", e);
+        return HttpResponse::InternalServerError().json(json!({ 
+            "error": "Failed to commit transaction",
+            "details": e.to_string()
+        }));
+    }
     
     // 3. Добавляем дни подписки
     let api_url = format!("http://127.0.0.1:8080/users/{}/extend", telegram_id);
@@ -462,14 +471,7 @@ async fn exchange_coins(
         },
     };
 
-    println!("[DEBUG] Committing transaction");
-    if let Err(e) = transaction.commit().await {
-        println!("[ERROR] Failed to commit transaction: {:?}", e);
-        return HttpResponse::InternalServerError().json(json!({ 
-            "error": "Failed to commit transaction",
-            "details": e.to_string()
-        }));
-    }
+    
 
     println!("[DEBUG] Exchange completed successfully");
     HttpResponse::Ok().json(json!({
